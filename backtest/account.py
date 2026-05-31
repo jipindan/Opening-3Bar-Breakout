@@ -21,7 +21,7 @@ def _per_lot_margin(entry_price, multiplier):
     return entry_price * multiplier * config.MARGIN_RATE
 
 
-def simulate_account(trades_df, risk_pct=None, margin_cap=None):
+def simulate_account(trades_df, risk_pct=None, margin_cap=None, init_capital=None):
     """对所有品种的 1 手候选交易做账户级模拟。
 
     入参 trades_df 需含：symbol, entry_time, exit_time, entry_price, multiplier,
@@ -33,13 +33,14 @@ def simulate_account(trades_df, risk_pct=None, margin_cap=None):
     """
     risk_pct = config.RISK_PCT if risk_pct is None else risk_pct
     margin_cap = config.MARGIN_CAP if margin_cap is None else margin_cap
+    init_capital = config.INIT_CAPITAL if init_capital is None else init_capital
 
     df = trades_df.copy()
     df["entry_time"] = pd.to_datetime(df["entry_time"])
     df["exit_time"] = pd.to_datetime(df["exit_time"])
     df = df.sort_values("entry_time").reset_index(drop=True)
 
-    equity = config.INIT_CAPITAL      # 已实现权益（现金口径）
+    equity = init_capital             # 已实现权益（现金口径）
     used_margin = 0.0                 # 当前占用保证金
     open_positions = []               # [{exit_time, scaled_pnl, margin}]
     equity_points = []                # [(time, equity)] 用于回撤/曲线
@@ -100,32 +101,34 @@ def simulate_account(trades_df, risk_pct=None, margin_cap=None):
     settle_before(pd.Timestamp.max)
 
     sized_df = pd.DataFrame(records)
-    summary = _summarize(sized_df, equity_points, equity)
+    summary = _summarize(sized_df, equity_points, equity, init_capital)
     return sized_df, summary
 
 
-def _summarize(sized_df, equity_points, final_equity):
+def _summarize(sized_df, equity_points, final_equity, init_capital=None):
     taken = sized_df[~sized_df["skipped"]]
     n_taken = len(taken)
     n_skipped = int(sized_df["skipped"].sum())
 
     # 权益曲线（按平仓时间）→ 最大回撤。
+    cap = init_capital if init_capital is not None else config.INIT_CAPITAL
+
     if equity_points:
         eq = pd.Series(
-            [config.INIT_CAPITAL] + [v for _, v in sorted(equity_points, key=lambda x: x[0])]
+            [cap] + [v for _, v in sorted(equity_points, key=lambda x: x[0])]
         )
         running_max = eq.cummax()
         max_dd = abs(((eq - running_max) / running_max).min()) * 100
     else:
         max_dd = 0.0
 
-    total_return = (final_equity - config.INIT_CAPITAL) / config.INIT_CAPITAL * 100
+    total_return = (final_equity - cap) / cap * 100
 
     wins = (taken["scaled_pnl"] > 0).sum()
     win_rate = wins / n_taken * 100 if n_taken else 0.0
 
     return {
-        "初始资金(元)": config.INIT_CAPITAL,
+        "初始资金(元)": cap,
         "期末权益(元)": round(final_equity, 2),
         "总收益率(%)": round(total_return, 2),
         "最大回撤(%)": round(max_dd, 2),

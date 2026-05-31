@@ -82,8 +82,22 @@ def fetch_klines(symbol_key, use_cache=True):
     path = _cache_path(symbol_key)
 
     if use_cache and os.path.exists(path):
-        df = pd.read_csv(path, parse_dates=["datetime"])
-        df["trading_date"] = pd.to_datetime(df["trading_date"]).dt.date
+        df = pd.read_csv(path)
+        # 兼容两种缓存格式：旧版已转换北京时间字符串，新版为纳秒UTC整数
+        sample = str(df["datetime"].iloc[0])
+        if sample.lstrip("-").isdigit():
+            df["datetime"] = (
+                pd.to_datetime(df["datetime"].astype("int64"), unit="ns", utc=True)
+                .dt.tz_convert("Asia/Shanghai")
+                .dt.tz_localize(None)
+            )
+        else:
+            df["datetime"] = pd.to_datetime(df["datetime"])
+        if "trading_date" in df.columns and "session_id" in df.columns:
+            df["trading_date"] = pd.to_datetime(df["trading_date"]).dt.date
+        else:
+            # 新格式缓存（只有 OHLCV，无 trading_date/session_id），补标注
+            df = _annotate_trading_day_and_session(df.dropna(subset=["close"]).reset_index(drop=True))
     else:
         raw = _download_from_tqsdk(symbol_key)
         df = _annotate_trading_day_and_session(raw)

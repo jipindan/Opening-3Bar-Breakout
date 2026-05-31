@@ -29,3 +29,5 @@ output/cache/
 .idea/
 .vscode/
 *.swp
+
+LOG.md
